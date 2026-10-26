@@ -2,9 +2,10 @@ import { spawnSync } from 'node:child_process'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { afterEach, beforeAll, afterAll, describe, expect, it } from 'vitest'
-import { getGlobalDispatcher } from 'undici'
+import { Agent, getGlobalDispatcher, setGlobalDispatcher } from 'undici'
 import {
   clearedProxyEnv,
+  fetchWithCallerDeadlines,
   installProxyFromEnvironment,
   proxyEnvironmentForChild,
   proxyRouteFor,
@@ -238,6 +239,101 @@ describe('proxyRouteFor', () => {
     const { dispose } = await install(proxyAll())
     try {
       expect(proxyRouteFor(new URL(originUrl))).toEqual({ proxied: false })
+    } finally {
+      await dispose()
+    }
+  })
+})
+
+describe('fetchWithCallerDeadlines', () => {
+  /** undici's response deadlines, shortened from their 300-second defaults. */
+  const transportDeadlineMs = 50
+  let slow: Server
+  let slowUrl: string
+  /** Completions of the responses the slow server holds until a case releases them. */
+  const held: (() => void)[] = []
+  let onHeld: (() => void) | undefined
+
+  beforeAll(async () => {
+    slow = createServer((request, response) => {
+      const hold = (send: () => void): void => {
+        held.push(() => { if (!response.destroyed) send() })
+        onHeld?.()
+      }
+      if (request.url === '/late-headers') {
+        hold(() => { response.end('LATE-HEADERS') })
+      } else if (request.url === '/paused-body') {
+        response.writeHead(200, { 'content-type': 'text/plain' })
+        response.write('first|')
+        hold(() => { response.end('rest') })
+      }
+      // Any other path never answers; only the client's signal ends it.
+    })
+    slowUrl = `http://127.0.0.1:${String((await listen(slow)).port)}`
+  })
+
+  afterAll(async () => {
+    slow.closeAllConnections()
+    await close(slow)
+  })
+
+  /** Resolve once the slow server holds `count` responses. */
+  async function untilHeld(count: number): Promise<void> {
+    while (held.length < count) await new Promise<void>((resolve) => { onHeld = resolve })
+  }
+
+  /** Complete every held response whose client is still connected. */
+  function release(): void {
+    for (const send of held.splice(0)) send()
+  }
+
+  /** Run one case under a global dispatcher whose response deadlines are {@link transportDeadlineMs}. */
+  async function withShortTransportDeadlines(run: () => Promise<void>): Promise<void> {
+    const previous = getGlobalDispatcher()
+    const agent = new Agent({ headersTimeout: transportDeadlineMs, bodyTimeout: transportDeadlineMs })
+    setGlobalDispatcher(agent)
+    try {
+      await run()
+    } finally {
+      release()
+      setGlobalDispatcher(previous)
+      await agent.destroy()
+    }
+  }
+
+  // Each case holds the request under test first, then waits for a plain `fetch` started later to
+  // fail on the dispatcher deadline, so the held request has been silent at least that long.
+  it('waits past the dispatcher deadline for late response headers', async () => {
+    await withShortTransportDeadlines(async () => {
+      const late = fetchWithCallerDeadlines(`${slowUrl}/late-headers`)
+      await untilHeld(1)
+      await expect(fetch(`${slowUrl}/late-headers`)).rejects.toThrow()
+      release()
+      await expect((await late).text()).resolves.toBe('LATE-HEADERS')
+    })
+  })
+
+  it('waits past the dispatcher deadline between body chunks', async () => {
+    await withShortTransportDeadlines(async () => {
+      const paused = await fetchWithCallerDeadlines(`${slowUrl}/paused-body`)
+      const text = paused.text()
+      await untilHeld(1)
+      await expect((await fetch(`${slowUrl}/paused-body`)).text()).rejects.toThrow()
+      release()
+      await expect(text).resolves.toBe('first|rest')
+    })
+  })
+
+  it('ends the request when the caller signal aborts', async () => {
+    await expect(fetchWithCallerDeadlines(`${slowUrl}/silent`, { signal: AbortSignal.timeout(transportDeadlineMs) }))
+      .rejects.toMatchObject({ name: 'TimeoutError' })
+  })
+
+  it('keeps the active proxy route', async () => {
+    const { dispose } = await install(proxyAll())
+    try {
+      await expect((await fetchWithCallerDeadlines(proxyTarget)).text()).resolves.toBe('VIA-PROXY')
+      expect(proxied).toEqual([`GET ${proxyTarget}`])
     } finally {
       await dispose()
     }

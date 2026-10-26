@@ -303,6 +303,39 @@ export async function installProxyFromEnvironment(
 }
 
 /**
+ * Send one request through the process-wide dispatcher with undici's response deadlines disabled.
+ *
+ * undici bounds every request it dispatches by a 300-second `headersTimeout` (until the response
+ * headers) and a 300-second `bodyTimeout` (between body chunks), and `fetch` exposes no option for
+ * either. A caller whose own deadline can be longer, such as a model stream that stays silent while
+ * its provider prefills a long prompt, would otherwise fail after five minutes regardless of its
+ * configuration. The override wraps the dispatcher installed at call time instead of replacing it,
+ * so the request keeps the active proxy route.
+ *
+ * The caller owns termination: `init.signal` must abort the request when the caller's deadline
+ * expires, because no transport deadline remains.
+ *
+ * @param input - the request target, as `fetch` accepts it.
+ * @param init - the request options, as `fetch` accepts them.
+ * @returns the response of the global `fetch`.
+ */
+export async function fetchWithCallerDeadlines(
+  input: string | URL | Request,
+  init?: RequestInit,
+): Promise<Response> {
+  const { Dispatcher1Wrapper, getGlobalDispatcher } = await import('undici')
+  const composed = getGlobalDispatcher().compose(dispatch => (options, handler) => dispatch(
+    { ...options, headersTimeout: 0, bodyTimeout: 0 },
+    handler,
+  ))
+  // Node's `fetch` dispatches through undici's version-1 handler interface, the
+  // same adaptation `setGlobalDispatcher` publishes for it. `dispatcher` is the
+  // undici extension Node's `fetch` reads; the DOM `RequestInit` type omits it.
+  const request = { ...init, dispatcher: new Dispatcher1Wrapper(composed) }
+  return await fetch(input, request)
+}
+
+/**
  * The environment overlay that removes every proxy name from a spawned child.
  *
  * A harness that replays a recorded session must reach its own fixture server, not the proxy a

@@ -158,11 +158,14 @@ export interface PiAiProviderProfile {
   cacheRetention?: CacheRetention
   /** Streaming transport preference. */
   transport?: Transport
-  /** HTTP/provider SDK timeout in milliseconds. */
+  /**
+   * Provider SDK request timeout in milliseconds; the OpenAI and Anthropic
+   * SDKs apply it until response headers arrive and default to ten minutes.
+   */
   timeoutMs?: number
   /** WebSocket connection timeout in milliseconds. */
   websocketConnectTimeoutMs?: number
-  /** Maximum provider idle time while one stream read is outstanding. */
+  /** Maximum provider idle time while one stream read is outstanding, including the wait for response headers. */
   streamIdleTimeoutMs?: number
   /**
    * Maximum base64-encoded image payload per request. When a request's

@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-使用本包可为采用 Node 内置 `fetch` 的 Harness 请求应用一份出站 HTTP 代理策略，包括 LLM（大语言模型）、web 搜索与 HTTP MCP 流量。启动器只读取一次标准代理环境变量，普通 `fetch` 调用方无需额外引入或改动。loopback 流量保持直连；不受支持的代理 URL 会被报告，并针对受影响的协议跳过。公共辅助函数可让调用方路由采用自有代理设置的传输、准备子进程环境，或为隔离回放清除代理变量。
+使用本包可为采用 Node 内置 `fetch` 的 Harness 请求应用一份出站 HTTP 代理策略，包括 LLM（大语言模型）、web 搜索与 HTTP MCP 流量。启动器只读取一次标准代理环境变量，普通 `fetch` 调用方无需额外引入或改动。loopback 流量保持直连；不受支持的代理 URL 会被报告，并针对受影响的协议跳过。公共辅助函数可让调用方路由采用自有代理设置的传输、发送截止时间长于 undici 五分钟默认值的请求、准备子进程环境，或为隔离回放清除代理变量。
 
 ## 目录
 
@@ -35,9 +35,12 @@ kind: "package-reference"
 |---|---|
 | 普通请求，或最终落到 `globalThis.fetch` 的 SDK | 什么都不用——全局 dispatcher 已经在路由它 |
 | 需要按“这次请求是否走代理”分支的调用 | `proxyRouteFor(url)` |
+| 自身截止时间可能超过五分钟的请求，例如在长时间预填充期间保持静默的模型流 | `fetchWithCallerDeadlines(input, init)`，并传入在该截止时间中止的 `signal` |
 | 接受自有代理 URL 的 SDK | `proxyRouteFor(url)`，把 `route.proxy` 传进去 |
 | 由你自己构造环境的 spawn | 把 `proxyEnvironmentForChild()` 应用到该 spawn（`undefined` 表示删除） |
 | 必须连到自带 fixture（测试前置数据）服务器的 harness | 把 `clearedProxyEnv()` 应用到该 spawn |
+
+默认情况下，undici 分派的每个请求，若 300 秒内没有收到响应头，或连续 300 秒没有收到响应体分块，就会被结束；`fetch` 不提供调整这两个截止时间的选项。`fetchWithCallerDeadlines` 通过调用时已安装的 dispatcher 发送一次请求并停用这两个截止时间，因此请求保留其代理路由，并持续到调用方的 `signal` 中止它。
 
 `proxyRouteFor` 给出的不只是答案，还有该答案所假定的传输：走代理的那一支携带着此刻正按该策略路由的 dispatcher。若调用方先读策略、再自建传输，卸载就可能落在两次读取之间，把请求发往其分支从未放行的去处。
 

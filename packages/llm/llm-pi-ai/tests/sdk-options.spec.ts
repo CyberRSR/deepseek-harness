@@ -11,6 +11,7 @@ vi.mock('@earendil-works/pi-ai/api/openai-completions.lazy', () => ({
   openAICompletionsApi: () => ({ stream: streamSimple, streamSimple }),
 }))
 
+import { fetchWithCallerDeadlines } from '@deepseek-ai/dsh-http-proxy'
 import { PiAiAdapter } from '../src/adapter.ts'
 import { resolveProfiles } from '../src/config.ts'
 import { memoryAuth } from './auth-double.ts'
@@ -56,6 +57,14 @@ describe('pi-ai SDK retry boundary', () => {
       type: 'finish',
       reason: { kind: 'error', failure: { message: 'mock SDK boundary' } },
     })
+  })
+
+  it('sends through a fetch whose deadlines are the profile timeouts rather than the transport defaults', async () => {
+    streamSimple.mockImplementation(() => { throw new Error('mock SDK boundary') })
+
+    await drain(gatewayAdapter())
+
+    expect(streamSimple.mock.calls[0]?.[2]).toMatchObject({ fetch: fetchWithCallerDeadlines })
   })
 
   it('dispatches a hand-declared route to the endpoint and model its configuration describes', async () => {
