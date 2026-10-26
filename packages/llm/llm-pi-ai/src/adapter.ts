@@ -30,6 +30,7 @@ import type {
   Api,
   AuthContext,
   CredentialStore,
+  KnownApi,
   Model,
   Models,
   ModelThinkingLevel,
@@ -37,6 +38,7 @@ import type {
   SimpleStreamOptions,
   ThinkingLevel,
 } from '@earendil-works/pi-ai'
+import { fetchWithCallerDeadlines } from '@deepseek-ai/dsh-http-proxy'
 import {
   attributionHeaders,
   contentHasImage,
@@ -72,6 +74,24 @@ const ANTHROPIC_TOOL_UPDATE_PLACEHOLDER: ToolSchema = {
   description: 'Reserved placeholder that keeps deferred tool loading active; never call this tool.',
   parameters: { type: 'object', properties: {} },
 }
+
+/**
+ * Whether each pi-ai protocol sends its requests through the `fetch` option.
+ * The Google protocols reject a custom `fetch`, and Bedrock sends through the
+ * AWS SDK. A protocol outside pi-ai's known set keeps pi-ai's default transport.
+ */
+const INJECTED_FETCH_PROTOCOLS: Readonly<Record<string, boolean>> = {
+  'openai-completions': true,
+  'openai-responses': true,
+  'azure-openai-responses': true,
+  'openai-codex-responses': true,
+  'anthropic-messages': true,
+  'mistral-conversations': true,
+  'pi-messages': true,
+  'google-generative-ai': false,
+  'google-vertex': false,
+  'bedrock-converse-stream': false,
+} satisfies Record<KnownApi, boolean>
 
 /** One resolution's frozen view: the profiles and the collection built from them. */
 interface PiAiSnapshot {
@@ -141,6 +161,18 @@ function profileOptions(
     // The agent recovery layer owns visible attempts; one adapter call is one SDK attempt.
     maxRetries: 0,
   }
+}
+
+/**
+ * The transport for one request. Node's `fetch` ends a response after five
+ * minutes without headers or body bytes, so a protocol that takes an injected
+ * `fetch` sends without those deadlines and stays bounded by the profile's
+ * `streamIdleTimeoutMs` watchdog and `timeoutMs` SDK timeout instead.
+ * @param api - wire protocol of the requested model.
+ * @returns the `fetch` option, or nothing for a protocol that cannot take one.
+ */
+function transportOptions(api: Api): Pick<SimpleStreamOptions, 'fetch'> {
+  return INJECTED_FETCH_PROTOCOLS[api] === true ? { fetch: fetchWithCallerDeadlines } : {}
 }
 
 /**
@@ -415,6 +447,7 @@ export class PiAiAdapter extends LlmAdapter {
         }, onReplayDegrade, updates.systemPromptUpdate === 'in-history')
       const events = snapshot.models.streamSimple(model, context, {
         ...profileOptions(profile, reasoning, apiKey),
+        ...transportOptions(model.api),
         ...options.temperature === undefined ? {} : { temperature: options.temperature },
         ...options.maxTokens === undefined ? {} : { maxTokens: options.maxTokens },
         ...options.sessionId === undefined ? {} : { sessionId: String(options.sessionId) },

@@ -153,6 +153,25 @@ describe('PiAiAdapter provider routing', () => {
     expect(server.requests[0]).not.toHaveProperty('dsh_plugin_packages')
   })
 
+  it('sends a Google route through its own transport, which refuses an injected fetch', async () => {
+    const server = await mockServer([{ status: 500, body: '{"error":{"code":500,"message":"probe","status":"INTERNAL"}}' }])
+    const ctx = new Context()
+    await ctx.plugin(LlmRuntime)
+    await ctx.plugin(LlmPiAi, { providers: { google: { apiKeyEnv: 'PI_TEST_KEY', baseURL: server.url } } })
+
+    const result = await assemble(ctx, {
+      provider: 'google',
+      model: 'gemini-2.5-flash',
+      messages: [createUserMessage({
+        content: [{ type: 'text', text: 'hi' }],
+        source: { kind: 'model', provider: 'google', model: 'gemini-2.5-flash' },
+      })],
+    })
+
+    expect(server.paths[0]).toContain('gemini-2.5-flash')
+    expect(result.finish).toMatchObject({ kind: 'error', failure: { code: 'SERVER' } })
+  })
+
   it('uses a dynamic request effort and reports unsupported efforts before network I/O', async () => {
     const server = await mockServer([{ events: textEvents }, { events: textEvents }])
     const ctx = await harness(server.url, { reasoning: 'max' })

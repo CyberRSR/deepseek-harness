@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-Use this package to apply one outbound HTTP proxy policy to Harness requests that use Node's built-in `fetch`, including LLM, web-search, and HTTP MCP traffic. The launcher reads standard proxy environment variables once, and ordinary `fetch` callers require no extra imports or changes. Local loopback traffic stays direct, while unsupported proxy URLs are reported and skipped for the affected scheme. Public helpers let callers route transports with their own proxy settings, prepare child-process environments, or clear proxy variables for isolated replays.
+Use this package to apply one outbound HTTP proxy policy to Harness requests that use Node's built-in `fetch`, including LLM, web-search, and HTTP MCP traffic. The launcher reads standard proxy environment variables once, and ordinary `fetch` callers require no extra imports or changes. Local loopback traffic stays direct, while unsupported proxy URLs are reported and skipped for the affected scheme. Public helpers let callers route transports with their own proxy settings, send a request whose deadline is longer than undici's five-minute defaults, prepare child-process environments, or clear proxy variables for isolated replays.
 
 ## Table of Contents
 
@@ -35,9 +35,12 @@ Plain `fetch()` is proxied, and so is any SDK that reaches `globalThis.fetch` �
 |---|---|
 | A plain request, or an SDK that reaches `globalThis.fetch` | nothing — the global dispatcher already routes it |
 | A call that must branch on whether this request is proxied | `proxyRouteFor(url)` |
+| A request whose own deadline can exceed five minutes, such as a model stream that stays silent through a long prefill | `fetchWithCallerDeadlines(input, init)`, with a `signal` that aborts at that deadline |
 | An SDK that takes a proxy URL of its own | `proxyRouteFor(url)`, and pass `route.proxy` |
 | A spawn whose environment you build yourself | apply `proxyEnvironmentForChild()` to it (`undefined` means remove) |
 | A harness that must reach its own fixture server | apply `clearedProxyEnv()` to the spawn |
+
+By default, undici ends every request it dispatches after 300 seconds without response headers, or after 300 seconds without a body chunk, and `fetch` takes no option for either deadline. `fetchWithCallerDeadlines` sends one request through the dispatcher installed at call time with both deadlines disabled, so the request keeps its proxy route and lasts until its caller's `signal` aborts it.
 
 `proxyRouteFor` answers with the transport that answer assumed, not just the answer: its proxied arm carries the dispatcher already routing by this policy. A caller that read the policy and then built its own transport could have an unmount land between the two and send the request somewhere its branch never cleared.
 
