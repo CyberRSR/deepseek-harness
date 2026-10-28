@@ -41,6 +41,7 @@ import { DesktopCommandManager } from './command-management.ts'
 import { serveWebDocument, authenticateWebHost, forwardWebRequest } from './web-document.ts'
 import { DesktopFatalRecovery } from './fatal-recovery.ts'
 import { pruneCrashReports, RendererConsoleTail, writeCrashReport, type CrashReportSource } from './crash-report.ts'
+import { pruneRunLogs, RunLog } from './run-log.ts'
 import { OperationJournal } from './operation-journal.ts'
 import { runOperationReportJob, type OperationReportJobResult } from './operation-report-job.ts'
 import { openWelcomeWindow } from './welcome-window.ts'
@@ -84,6 +85,8 @@ let windowsLanguage: string | undefined = readDesktopLocaleCache(app.getPath('us
 let backendReady = false
 /** Error-level console output of the primary window, attached to crash reports. */
 const rendererConsole = new RendererConsoleTail()
+/** This launch's run log, opened once this process owns the single Desktop instance. */
+let runLog: RunLog | undefined
 
 // Platform-conventional logs directory (macOS ~/Library/Logs/<name>, otherwise under userData);
 // set before ready so the first fatal report already resolves under it.
@@ -367,6 +370,7 @@ function createWindow(preload: string, show = false, primary = false): BrowserWi
 async function main(): Promise<void> {
   const desktopSettings = readDesktopSettings(app.getPath('userData'))
   void pruneCrashReports(app.getPath('logs'))
+  void pruneRunLogs(app.getPath('logs'))
   const journalDirectory = process.env.DSH_DESKTOP_UPDATE_JOURNAL_DIR
   const updateJournal = journalDirectory === undefined ? undefined : new DesktopUpdateJournal(journalDirectory, app.getVersion())
   const resources = runtimeResources()
@@ -524,7 +528,7 @@ async function main(): Promise<void> {
           segmentBytes: 256 * 1024, recordBytes: 4096, queuedBytes: 64 * 1024,
         })
         operationJournal.enqueue(JSON.stringify(record))
-      })
+      }, (stream, chunk) => { runLog?.write(stream === 'stdout' ? 'host:stdout' : 'host:stderr', chunk) })
     return {
       start: async () => {
         const ready = await host.start()
@@ -771,7 +775,12 @@ async function main(): Promise<void> {
       if (backend.host === undefined || hostUrl === undefined || hostCookie === undefined) {
         return Promise.resolve(new Response(null, { status: 503 }))
       }
-      return forwardWebRequest(request, hostUrl, hostCookie)
+      const started = Date.now()
+      return forwardWebRequest(request, hostUrl, hostCookie).catch((error: unknown) => {
+        // The renderer sees only a failed fetch; the run log keeps which request failed and when.
+        console.error(`dsh desktop: ${request.method} ${url.pathname} could not be forwarded to the Host after ${String(Date.now() - started)} ms`, error)
+        throw error
+      })
     }
     return Promise.resolve(new Response(null, { status: 404 }))
   })
@@ -1192,8 +1201,10 @@ async function main(): Promise<void> {
     }
     window.on('closed', () => { if (mainWindow === window) mainWindow = undefined })
     window.webContents.on('console-message', (details) => {
-      if (details.level !== 'error') return
-      rendererConsole.push(`${details.sourceId}:${String(details.lineNumber)} ${details.message}`)
+      if (details.level !== 'warning' && details.level !== 'error') return
+      const line = `${details.sourceId}:${String(details.lineNumber)} ${details.message}`
+      runLog?.write('renderer', `${details.level}: ${line}\n`)
+      if (details.level === 'error') rendererConsole.push(line)
     })
     window.webContents.on('did-fail-load', (_event, code, description, url, isMainFrame) => {
       if (isMainFrame && code !== -3 && !quitting && !window.isDestroyed()) {
@@ -1441,6 +1452,20 @@ async function main(): Promise<void> {
 }
 
 const ownsDesktopInstance = claimDesktopSingleInstance(app, () => { focusPrimaryWindow() })
+
+if (ownsDesktopInstance) {
+  const launched = new Date()
+  runLog = RunLog.open(app.getPath('logs'), [
+    `time: ${launched.toISOString()}`,
+    `app: ${app.name} ${app.getVersion()}`,
+    `platform: ${process.platform} ${process.arch}`,
+    `electron: ${process.versions.electron}`,
+    `node: ${process.versions.node}`,
+    `shell pid: ${String(process.pid)}`,
+  ], launched)
+  runLog?.captureConsole(console)
+  process.once('exit', () => { runLog?.close() })
+}
 
 if (ownsDesktopInstance) void app.whenReady().then(main).catch(async (error: unknown) => {
   const message = error instanceof Error ? error.message : String(error)
