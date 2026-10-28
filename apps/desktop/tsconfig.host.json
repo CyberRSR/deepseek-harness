@@ -40,6 +40,9 @@
     },
     {
       "path": "../../packages/util/file-drag"
+    },
+    {
+      "path": "../../packages/util/http-proxy"
     }
   ],
   "exclude": [

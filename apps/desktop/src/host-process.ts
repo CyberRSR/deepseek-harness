@@ -187,6 +187,7 @@ export class DesktopHostProcess {
    * @param packageManager - Bundled pnpm entry and Node launcher directory, scoped to package operations.
    * @param onPlatformSession - Private credential updates for embedded Platform views.
    * @param onPluginOperation - Optional diagnostic sink; malformed records are ignored without failing the Host.
+   * @param onOutput - Optional copy of every stdout and stderr chunk the Host writes; it must not throw.
    */
   constructor(
     private readonly node: string,
@@ -200,6 +201,7 @@ export class DesktopHostProcess {
 
     private readonly onPlatformSession?: (session: PlatformSession | null) => void,
     private readonly onPluginOperation?: (record: PluginOperationRecord) => void,
+    private readonly onOutput?: (stream: 'stdout' | 'stderr', chunk: string | Uint8Array) => void,
   ) {}
 
   /**
@@ -224,8 +226,12 @@ export class DesktopHostProcess {
     })
     this.child = child
     child.stderr?.setEncoding('utf8')
-    child.stderr?.on('data', (chunk: string) => { this.stderr = (this.stderr + chunk).slice(-MAX_HOST_DIAGNOSTIC_CHARS) })
+    child.stderr?.on('data', (chunk: string) => {
+      this.stderr = (this.stderr + chunk).slice(-MAX_HOST_DIAGNOSTIC_CHARS)
+      this.onOutput?.('stderr', chunk)
+    })
     child.stdout?.pipe(process.stdout)
+    if (this.onOutput !== undefined) child.stdout?.on('data', (chunk: Uint8Array) => { this.onOutput?.('stdout', chunk) })
     child.on('message', (message: unknown) => {
       if (typeof message === 'object' && message !== null && 'type' in message && message.type === 'plugin-operation') {
         const record = 'record' in message ? parsePluginOperationRecord(message.record) : undefined

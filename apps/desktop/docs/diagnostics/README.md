@@ -8,12 +8,13 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-This reference describes Desktop native failure recovery, diagnostic reports, recent plugin operation records, and collection and shutdown limits.
+This reference describes Desktop native failure recovery, diagnostic reports, per-launch run logs, recent plugin operation records, and collection and shutdown limits.
 
 ## Table of Contents
 
 - [Recover from a failure](#recovery)
 - [Report contents](#report-contents)
+- [Run log](#run-log)
 - [Recent operation records](#operation-records)
 - [Collection and shutdown](#collection-and-shutdown)
 
@@ -38,6 +39,14 @@ Before the first fatal dialog opens, Electron writes a crash report to the platf
 The file `crash-<UTC time>-<source>.log` records the source (`host` for a Host exit, `web-boot` for a renderer boot failure, `renderer` for a renderer or document failure, `main` for a shell error), whether the backend had reached ready, application and runtime versions, the error with its enumerable properties and cause chain (cut at 256 KiB), the Host’s own error and explicitly selected startup metadata (at most 64 Ki characters, including a truncation notice; startup errors reserve space for metadata by limiting the original error and startup-entry details to 8 Ki characters each, with explicit truncation notices) when the Host reported a startup failure over IPC before exiting, and the primary window’s recent error-level console output (at most 64 KiB).
 
 A Host exit report therefore contains the retained stderr tail, which may include plugin output. A fatal failure during shutdown writes a report without opening a dialog. Files are owner-only where the platform supports it; startup keeps the ten newest reports and removes older ones without touching other files in the directory.
+
+<a id="run-log"></a>
+
+## Run log
+
+Each Desktop launch writes `run-<UTC launch time>.log` to the same platform logs directory, so a failure that leaves the application running, such as a command that ends with an error, can be traced afterwards. The file starts with the application, platform, Electron, and Node versions and the shell process id. Every later output line becomes one line stamped with its UTC time and origin: `[host:stdout]` and `[host:stderr]` for everything the Host process prints, including Host logger messages and plugin output; `[main]` for the shell's own console output, including each application request that could not be forwarded to the Host, with its method, path, and elapsed time; and `[renderer]` for warning- and error-level console messages of the primary window. Terminal color sequences are removed.
+
+Writes are synchronous, so lines written before a crash or a forced exit are already in the file. One launch's log stops at 64 MiB behind a notice line, and a write failure stops logging for the rest of that launch without affecting the application. Startup keeps the ten newest run logs, including the current one, and removes older ones without touching other files. Like a Host exit report, a run log can contain anything a plugin prints; files are owner-only where the platform supports it, and a log needs review before it is shared.
 
 <a id="operation-records"></a>
 

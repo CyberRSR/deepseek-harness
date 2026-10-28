@@ -325,6 +325,25 @@ ${HTTP_HOST}`)
     await expect(host.start()).rejects.toThrow(message)
   })
 
+  it('hands every stdout and stderr chunk the Host writes to the output sink', async () => {
+    const runtime = projectWithHost(`
+process.stdout.write('host log: compaction started\\n', () => {
+  process.stderr.write('plugin warning: slow provider\\n', () => {
+    process.send({ type: 'fatal', message: 'fixture finished' }, () => process.disconnect())
+  })
+})
+`)
+    const output = { stdout: '', stderr: '' }
+    const host = new DesktopHostProcess(process.execPath, runtime, runtime, undefined, process.env,
+      undefined, undefined, undefined, undefined, undefined, (stream, chunk) => {
+        output[stream] += typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString()
+      })
+    hosts.push(host)
+    await expect(host.start()).rejects.toThrow('fixture finished')
+    await host.stop()
+    expect(output).toEqual({ stdout: 'host log: compaction started\n', stderr: 'plugin warning: slow provider\n' })
+  })
+
   it('keeps the Host\'s inspected error separate from the message it reports', async () => {
     const diagnostic = "Error: startup failed\\n    at boot (lib/index.js:3:9) {\\n  code: 'ENOENT',\\n  path: '/profile/cordis.yml'\\n}"
     const failures: Error[] = []
