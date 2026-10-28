@@ -94,6 +94,9 @@ export default defineConfig([
     fixedExtension: false,
     dts: false,
     clean: false,
+    // electron-builder packages lib/main.js without sibling chunks, so a dynamic import such as
+    // undici's, reached through dsh-http-proxy, must stay inside that one file.
+    outputOptions: { codeSplitting: false },
     deps: { neverBundle: ['electron'] },
   },
   ...(['preload-app', 'preload-welcome', 'preload-platform-account', 'preload-mandatory', 'preload-update-dialog'] as const).map(name => ({

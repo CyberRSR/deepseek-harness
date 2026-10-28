@@ -2,6 +2,15 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+
+const fetchWithCallerDeadlines = vi.hoisted(() => vi.fn())
+
+vi.mock('@deepseek-ai/dsh-http-proxy', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@deepseek-ai/dsh-http-proxy')>()
+  fetchWithCallerDeadlines.mockImplementation(actual.fetchWithCallerDeadlines)
+  return { ...actual, fetchWithCallerDeadlines }
+})
+
 import { authenticateWebHost, forwardWebRequest, serveWebDocument } from '../src/web-document.ts'
 
 const roots: string[] = []
@@ -52,6 +61,18 @@ it('forwards upload bytes and cancellation with Host credentials while keeping t
   expect(response.headers.get('set-cookie')).toBeNull()
   expect(response.headers.get('content-encoding')).toBeNull()
   expect(await response.text()).toBe('stream')
+})
+
+it('forwards through the fetch without five-minute transport deadlines, so a long command answer arrives', async () => {
+  fetchWithCallerDeadlines.mockClear()
+  const fetch = vi.fn().mockResolvedValue(new Response('{"ok":true}', { headers: { 'content-type': 'application/json' } }))
+  vi.stubGlobal('fetch', fetch)
+  const request = new Request('dsh-app://app/api/commands/execute', { method: 'POST', body: '{}', headers: { origin: 'dsh-app://app' } })
+  const response = await forwardWebRequest(request, 'http://127.0.0.1:1234/', 'session=owned')
+  expect(fetchWithCallerDeadlines).toHaveBeenCalledOnce()
+  expect((fetchWithCallerDeadlines.mock.calls[0]?.[0] as URL).href).toBe('http://127.0.0.1:1234/api/commands/execute')
+  expect(fetch.mock.calls[0]?.[1]).toHaveProperty('dispatcher')
+  expect(await response.text()).toBe('{"ok":true}')
 })
 
 it('drops connection-level headers the Host wrote for its own transport', async () => {

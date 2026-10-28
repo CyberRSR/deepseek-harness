@@ -1,6 +1,7 @@
 /** Local Web document and authenticated HTTP forwarding for the application window. */
 import { readFile } from 'node:fs/promises'
 import { extname, resolve, sep } from 'node:path'
+import { fetchWithCallerDeadlines } from '@deepseek-ai/dsh-http-proxy'
 
 const MIME: Readonly<Record<string, string>> = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
@@ -66,6 +67,9 @@ const PLUGIN_BUNDLE_PATH = /^\/plugins\//u
 
 /**
  * Forward local application requests to its authenticated Host, preserving streaming and cancellation.
+ * The request is sent without the five-minute response-header and body-chunk deadlines of Node's
+ * `fetch`: an RPC such as `/compact` answers only after its work finishes, which can take longer than
+ * five minutes, so the renderer's cancellation and the Host's own deadlines bound the exchange instead.
  * Plugin bundle responses lose their `cache-control` for `no-store`: the Host marks them immutable
  * under a revision that changes every launch, so Chromium's disk cache would only accumulate bundles
  * no later launch can reuse.
@@ -85,7 +89,7 @@ export async function forwardWebRequest(request: Request, host: string, cookie: 
   for (const name of ['host', 'origin', 'cookie', 'sec-fetch-site']) headers.delete(name)
   headers.set('cookie', cookie)
   const init = { method: request.method, headers, body: request.body, signal: request.signal, duplex: 'half', redirect: 'manual' as const }
-  const response = await fetch(target, init)
+  const response = await fetchWithCallerDeadlines(target, init)
   const outgoing = new Headers(response.headers)
   for (const name of WITHHELD_RESPONSE_HEADERS) outgoing.delete(name)
   if (PLUGIN_BUNDLE_PATH.test(source.pathname)) outgoing.set('cache-control', 'no-store')
