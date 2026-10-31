@@ -31,6 +31,9 @@ vi.mock('../src/crash-report.ts', async importOriginal => ({
   writeCrashReport: vi.fn<(...args: unknown[]) => Promise<string | undefined>>(),
   pruneCrashReports: vi.fn(async () => {}),
 }))
+// Run logs have their own unit tests; here no log opens, so a launch neither keeps a file open in
+// the test's user data nor wraps the worker's console.
+vi.mock('../src/run-log.ts', () => ({ RunLog: { open: () => undefined }, pruneRunLogs: vi.fn(async () => {}) }))
 
 const harness = await vi.hoisted(async () => {
   const { EventEmitter } = await import('node:events')

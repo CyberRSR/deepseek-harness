@@ -1469,7 +1469,8 @@ if (ownsDesktopInstance) {
     `shell pid: ${String(process.pid)}`,
   ], launched)
   runLog?.captureConsole(console)
-  process.once('exit', () => { runLog?.close() })
+  // Unlike will-quit, quit also follows app.exit(); Electron emits the process exit event from it.
+  app.on('quit', () => { runLog?.close() })
 }
 
 if (ownsDesktopInstance) void app.whenReady().then(main).catch(async (error: unknown) => {
