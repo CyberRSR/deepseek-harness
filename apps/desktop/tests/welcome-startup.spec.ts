@@ -46,6 +46,8 @@ vi.mock('../src/crash-report.ts', async importOriginal => ({
   writeCrashReport: vi.fn(async () => undefined),
   pruneCrashReports: vi.fn(async () => {}),
 }))
+// The harness's logs path is not a temporary directory, so no run log opens there.
+vi.mock('../src/run-log.ts', () => ({ RunLog: { open: () => undefined }, pruneRunLogs: vi.fn(async () => {}) }))
 vi.mock('electron', () => ({
   clipboard: { writeText: state.copy },
   app: {
@@ -87,6 +89,7 @@ vi.mock('electron', () => ({
   net: { fetch: vi.fn() },
   nativeTheme: state.nativeTheme,
   session: { defaultSession: {
+    on: vi.fn(),
     setPermissionCheckHandler: vi.fn(), setPermissionRequestHandler: vi.fn(), webRequest: { onBeforeSendHeaders: vi.fn() },
   } },
   protocol: { registerSchemesAsPrivileged: vi.fn(), handle: vi.fn() },
