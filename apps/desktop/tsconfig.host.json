@@ -42,6 +42,9 @@
       "path": "../../packages/util/file-drag"
     },
     {
+      "path": "../../packages/client/ui-file-actions"
+    },
+    {
       "path": "../../packages/util/http-proxy"
     }
   ],
